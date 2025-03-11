@@ -11,6 +11,7 @@ import {
     EarlyAccessFeature,
     RemoteConfigFeatureFlagCallback,
     EarlyAccessFeatureStage,
+    FeatureFlagDetail,
 } from './types'
 import { PostHogPersistence } from './posthog-persistence'
 
@@ -30,6 +31,7 @@ const logger = createLogger('[FeatureFlags]')
 const PERSISTENCE_ACTIVE_FEATURE_FLAGS = '$active_feature_flags'
 const PERSISTENCE_OVERRIDE_FEATURE_FLAGS = '$override_feature_flags'
 const PERSISTENCE_FEATURE_FLAG_PAYLOADS = '$feature_flag_payloads'
+const PERSISTENCE_FEATURE_FLAG_DETAILS = '$feature_flag_details'
 const PERSISTENCE_OVERRIDE_FEATURE_FLAG_PAYLOADS = '$override_feature_flag_payloads'
 const PERSISTENCE_FEATURE_FLAG_REQUEST_ID = '$feature_flag_request_id'
 
@@ -49,6 +51,7 @@ export const parseFeatureFlagDecideResponse = (
     currentFlags: Record<string, string | boolean> = {},
     currentFlagPayloads: Record<string, JsonType> = {}
 ) => {
+    const flagDetails = response['flags'] //TODO: If this exists, we can derive flags and flagPayloads from it.
     const flags = response['featureFlags']
     const flagPayloads = response['featureFlagPayloads']
     const requestId = response['requestId']
@@ -79,11 +82,13 @@ export const parseFeatureFlagDecideResponse = (
         newFeatureFlags = { ...currentFlags, ...newFeatureFlags }
         newFeatureFlagPayloads = { ...currentFlagPayloads, ...newFeatureFlagPayloads }
     }
+
     persistence &&
         persistence.register({
             [PERSISTENCE_ACTIVE_FEATURE_FLAGS]: Object.keys(filterActiveFeatureFlags(newFeatureFlags)),
             [ENABLED_FEATURE_FLAGS]: newFeatureFlags || {},
             [PERSISTENCE_FEATURE_FLAG_PAYLOADS]: newFeatureFlagPayloads || {},
+            [PERSISTENCE_FEATURE_FLAG_DETAILS]: flagDetails || {},
             ...(requestId ? { [PERSISTENCE_FEATURE_FLAG_REQUEST_ID]: requestId } : {}),
         })
 }
@@ -153,6 +158,32 @@ export class PostHogFeatureFlags {
 
     getFlags(): string[] {
         return Object.keys(this.getFlagVariants())
+    }
+
+    getFlagsWithDetails(): Record<string, FeatureFlagDetail> {
+        const flagDetails = this.instance.get_property(PERSISTENCE_FEATURE_FLAG_DETAILS)
+
+        const overriddenPayloads = this.instance.get_property(PERSISTENCE_OVERRIDE_FEATURE_FLAG_PAYLOADS)
+
+        if (!overriddenPayloads) {
+            return flagDetails || {}
+        }
+
+        const finalDetails = extend({}, flagDetails || {})
+        const overriddenKeys = Object.keys(overriddenPayloads)
+        for (let i = 0; i < overriddenKeys.length; i++) {
+            finalDetails[overriddenKeys[i]] = overriddenPayloads[overriddenKeys[i]]
+        }
+
+        if (!this._override_warning) {
+            logger.warn(' Overriding feature flag details!', {
+                flagDetails,
+                overriddenPayloads,
+                finalDetails,
+            })
+            this._override_warning = true
+        }
+        return finalDetails
     }
 
     getFlagVariants(): Record<string, string | boolean> {
@@ -365,10 +396,14 @@ export class PostHogFeatureFlags {
                 }
                 this.instance.persistence?.register({ [FLAG_CALL_REPORTED]: flagCallReported })
 
+                const flagDetails = this.getFeatureFlagDetails(key)
+
                 this.instance.capture('$feature_flag_called', {
                     $feature_flag: key,
                     $feature_flag_response: flagValue,
                     $feature_flag_payload: this.getFeatureFlagPayload(key) || null,
+                    $feature_flag_version: flagDetails?.metadata?.version,
+                    $feature_flag_reason: flagDetails?.reason,
                     $feature_flag_request_id: requestId,
                     $feature_flag_bootstrapped_response: this.instance.config.bootstrap?.featureFlags?.[key] || null,
                     $feature_flag_bootstrapped_payload:
@@ -379,6 +414,22 @@ export class PostHogFeatureFlags {
             }
         }
         return flagValue
+    }
+
+    /*
+     * Retrieves the details for a feature flag.
+     *
+     * ### Usage:
+     *
+     *     const details = getFeatureFlagDetails("my-flag")
+     *     console.log(details.metadata.version)
+     *     console.log(details.reason)
+     *
+     * @param {String} key Key of the feature flag.
+     */
+    getFeatureFlagDetails(key: string): FeatureFlagDetail | undefined {
+        const details = this.getFlagsWithDetails()
+        return details[key]
     }
 
     getFeatureFlagPayload(key: string): JsonType {

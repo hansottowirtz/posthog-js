@@ -1266,6 +1266,37 @@ describe('featureflags', () => {
             )
         })
 
+        it('includes version in feature flag called event', () => {
+            // Setup flags with requestId
+            featureFlags.receivedFeatureFlags({
+                featureFlags: { 'test-flag': true },
+                featureFlagPayloads: {},
+                requestId: TEST_REQUEST_ID,
+                flags: {
+                    'test-flag': {
+                        metadata: {
+                            version: 2,
+                        },
+                    },
+                },
+            })
+            featureFlags._hasLoadedFlags = true
+
+            // Test flag call
+            featureFlags.getFeatureFlag('test-flag')
+
+            // Verify capture call includes requestId
+            expect(instance.capture).toHaveBeenCalledWith(
+                '$feature_flag_called',
+                expect.objectContaining({
+                    $feature_flag: 'test-flag',
+                    $feature_flag_response: true,
+                    $feature_flag_request_id: TEST_REQUEST_ID,
+                    $feature_flag_version: 2,
+                })
+            )
+        })
+
         it('updates requestId when new decide response is received', () => {
             // First decide response
             featureFlags.receivedFeatureFlags({
@@ -1332,6 +1363,135 @@ describe('parseFeatureFlagDecideResponse', () => {
                 'beta-feature': 300,
                 'alpha-feature-2': 'fake-payload',
             },
+            $feature_flag_details: {},
+        })
+    })
+
+    it('enables feature flag details from decide v3^ response', () => {
+        const decideResponse = {
+            featureFlags: {
+                'beta-feature': true,
+                'alpha-feature-2': true,
+                'multivariate-flag': 'variant-1',
+            },
+            featureFlagPayloads: {
+                'beta-feature': 300,
+                'alpha-feature-2': '"fake-payload"',
+            },
+            flags: {
+                'beta-feature': {
+                    key: 'beta-feature',
+                    enabled: true,
+                    variant: 'variant-1',
+                    reason: 'test-reason',
+                    metadata: {
+                        version: 2,
+                        payload: 300,
+                        id: 1,
+                        description: 'test-description',
+                        evaluation: {
+                            reason: 'test-reason',
+                            condition_index: 1,
+                        },
+                    },
+                },
+                'alpha-feature-2': {
+                    key: 'alpha-feature-2',
+                    enabled: true,
+                    variant: 'variant-1',
+                    reason: 'test-reason',
+                    metadata: {
+                        version: 2,
+                        payload: '"fake-payload"',
+                        id: 2,
+                        description: 'test-description',
+                        evaluation: {
+                            reason: 'test-reason',
+                            condition_index: 1,
+                        },
+                    },
+                },
+                'multivariate-flag': {
+                    key: 'multivariate-flag',
+                    enabled: true,
+                    variant: 'variant-1',
+                    reason: 'test-reason',
+                    metadata: {
+                        version: 2,
+                        payload: '"fake-payload"',
+                        id: 3,
+                        description: 'test-description',
+                        evaluation: {
+                            reason: 'test-reason',
+                            condition_index: 1,
+                        },
+                    },
+                },
+            },
+        }
+        parseFeatureFlagDecideResponse(decideResponse, persistence)
+
+        expect(persistence.register).toHaveBeenCalledWith({
+            $active_feature_flags: ['beta-feature', 'alpha-feature-2', 'multivariate-flag'],
+            $enabled_feature_flags: {
+                'beta-feature': true,
+                'alpha-feature-2': true,
+                'multivariate-flag': 'variant-1',
+            },
+            $feature_flag_payloads: {
+                'beta-feature': 300,
+                'alpha-feature-2': '"fake-payload"',
+            },
+            $feature_flag_details: {
+                'beta-feature': {
+                    key: 'beta-feature',
+                    enabled: true,
+                    variant: 'variant-1',
+                    reason: 'test-reason',
+                    metadata: {
+                        version: 2,
+                        payload: 300,
+                        id: 1,
+                        description: 'test-description',
+                        evaluation: {
+                            reason: 'test-reason',
+                            condition_index: 1,
+                        },
+                    },
+                },
+                'alpha-feature-2': {
+                    key: 'alpha-feature-2',
+                    enabled: true,
+                    variant: 'variant-1',
+                    reason: 'test-reason',
+                    metadata: {
+                        version: 2,
+                        payload: '"fake-payload"',
+                        id: 2,
+                        description: 'test-description',
+                        evaluation: {
+                            reason: 'test-reason',
+                            condition_index: 1,
+                        },
+                    },
+                },
+                'multivariate-flag': {
+                    key: 'multivariate-flag',
+                    enabled: true,
+                    variant: 'variant-1',
+                    reason: 'test-reason',
+                    metadata: {
+                        version: 2,
+                        payload: '"fake-payload"',
+                        id: 3,
+                        description: 'test-description',
+                        evaluation: {
+                            reason: 'test-reason',
+                            condition_index: 1,
+                        },
+                    },
+                },
+            },
         })
     })
 
@@ -1365,6 +1525,7 @@ describe('parseFeatureFlagDecideResponse', () => {
         expect(persistence.register).toHaveBeenCalledWith({
             $active_feature_flags: ['test-flag'],
             $enabled_feature_flags: { 'test-flag': true },
+            $feature_flag_details: {},
             $feature_flag_payloads: {},
             $feature_flag_request_id: 'test-request-id-123',
         })
